@@ -36,7 +36,53 @@ Production-oriented Telegram bot and example backend for placing outbound calls 
 - Python 3.11+
 - A Telegram bot token from BotFather
 
-## Setup
+## Deployment
+
+### Option 1 — Docker Compose (recommended for VPS)
+
+Requires [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/).
+
+```bash
+cp .env.example .env
+# Edit .env and set TELEGRAM_BOT_TOKEN (and any other values you want to change)
+docker compose up -d
+```
+
+Both the backend and bot start automatically. The SQLite database is stored in a
+named Docker volume (`db_data`) so data survives restarts and container rebuilds.
+
+To view logs:
+
+```bash
+docker compose logs -f
+```
+
+To stop:
+
+```bash
+docker compose down
+```
+
+### Option 2 — Railway
+
+1. Push this repository to GitHub.
+2. Go to [railway.app](https://railway.app) and create a **New Project → Deploy from GitHub repo**.
+3. Create **two services** from the same repo:
+   - **backend** — set *Start Command* to `python -m app.backend`
+   - **bot** — set *Start Command* to `python main.py`
+4. In the **backend** service, add a *Public Domain* so the bot can reach it. Copy that URL.
+5. Set the following environment variables on **both** services (Railway Dashboard → Variables):
+
+   | Variable | Value |
+   | --- | --- |
+   | `TELEGRAM_BOT_TOKEN` | your token from BotFather |
+   | `DATABASE_URL` | Railway PostgreSQL URL (add a PostgreSQL plugin) |
+   | `BACKEND_API_BASE_URL` | `https://<your-backend-domain>/api` (bot service only) |
+   | `BACKEND_HOST` | `0.0.0.0` (backend service only) |
+
+6. Click **Deploy**. Railway detects the `Dockerfile` automatically via `railway.toml`.
+
+### Option 3 — Local development
 
 1. Create and activate a virtual environment.
 2. Install dependencies:
