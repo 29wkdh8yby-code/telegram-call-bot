@@ -96,8 +96,8 @@ def create_app(settings: Settings | None = None) -> Flask:
             return jsonify({"error": "Selected number is not available"}), 400
         try:
             user = update_selected_number(telegram_id, selected_number)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 404
+        except ValueError:
+            return jsonify({"error": "User not found"}), 404
         return jsonify({"user": user}), 200
 
     @app.post("/api/calls")
