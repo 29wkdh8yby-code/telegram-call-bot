@@ -1,1 +1,1 @@
-"""Telegram call bot application package."""
+"""SMTP-to-SMS Telegram Bot application package."""

@@ -1,162 +1,296 @@
-# telegram-call-bot
+# SMTP-to-SMS Telegram Bot
 
-Production-oriented Telegram bot and example backend for placing outbound calls through a backend-controlled trunk provider.
+A production-ready Telegram bot that lets approved users send consent-based SMS notifications through SMTP-to-SMS carrier email gateways.
+
+> ⚠️ **Important:** SMS delivery via SMTP-to-SMS gateways is controlled by mobile carriers and is not guaranteed. Messages may be delayed, filtered, blocked, or discontinued at any time. This platform is designed exclusively for sending messages to recipients who have **explicitly opted in**.
+
+---
 
 ## Features
 
-- Telegram-based user registration/login using Telegram identity
-- User profile, selected caller ID, and credit tracking stored with SQLAlchemy
-- Backend-driven available number list and caller ID selection
-- Outbound call placement, live status polling, call ending, and recent call history
-- Example Flask backend endpoints for auth, numbers, call routing, status, and history logging
-- `.env` driven configuration, structured logging, and SQLite-friendly local setup
+- 📧 **SMTP integration** — Gmail, Outlook, Zoho, or any custom SMTP server with app passwords
+- 📱 **Carrier gateway support** — Verizon, AT&T, T-Mobile, Metro, Boost, Cricket, US Cellular, Consumer Cellular, Google Fi, and more
+- ✅ **Consent tracking** — All recipients must be individually confirmed as opted-in
+- ⛔ **Opt-out management** — Mark recipients as opted out to permanently block future messages
+- 📊 **Rate limiting** — 5/min · 50/hr · 250/day per user (configurable)
+- 🔒 **Encrypted credentials** — All SMTP passwords are encrypted at rest with Fernet
+- 🔄 **Background queue** — Messages sent via ARQ worker with retry and exponential backoff
+- 🛡️ **Admin panel** — User management, stats, audit logs, suspend/unsuspend via Telegram commands
+- 🩺 **Health check** — HTTP endpoint at `/health` for monitoring
+- 🐳 **Docker Compose** — One command to deploy the full stack
 
-## Project structure
+---
 
-```text
-.
+## Architecture
+
+```
+telegram-call-bot/
 ├── app/
-│   ├── api_client.py
-│   ├── backend.py
-│   ├── bot.py
-│   ├── config.py
-│   ├── database.py
-│   ├── logging_config.py
-│   ├── models.py
-│   └── repository.py
+│   ├── handlers/              # aiogram 3 routers
+│   │   ├── __init__.py
+│   │   ├── admin_handler.py   # Admin commands (/admin)
+│   │   ├── keyboards.py       # Shared inline keyboard builders
+│   │   ├── menu.py            # /start, /help, main menu
+│   │   ├── middleware.py      # User upsert middleware
+│   │   ├── recipient_handler.py
+│   │   ├── send_handler.py
+│   │   ├── settings_handler.py
+│   │   └── smtp_handler.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── rate_limiter.py    # Redis-backed rate limits
+│   │   └── smtp_service.py    # SMTP connection test + send
+│   ├── workers/
+│   │   ├── __init__.py
+│   │   └── sms_worker.py      # ARQ background worker
+│   ├── bot.py                 # aiogram bot entry point
+│   ├── carriers.py            # Carrier gateway config (update here!)
+│   ├── config.py              # Pydantic settings
+│   ├── database.py            # Async SQLAlchemy engine
+│   ├── encryption.py          # Fernet encrypt/decrypt
+│   ├── logging_config.py      # Structured logging with redaction
+│   ├── models.py              # ORM models
+│   ├── repository.py          # Async DB helpers
+│   └── web.py                 # Health check HTTP server
+├── migrations/                # Alembic migrations
+│   └── versions/
+│       └── 0001_initial.py
+├── nginx/
+│   └── default.conf
+├── scripts/
+│   ├── backup.sh
+│   ├── deploy.sh
+│   └── setup.sh
 ├── tests/
-│   └── test_backend.py
+│   ├── test_carriers.py
+│   ├── test_encryption.py
+│   ├── test_rate_limiter.py
+│   └── test_recipient_utils.py
 ├── .env.example
+├── alembic.ini
+├── docker-compose.yml
+├── Dockerfile
 ├── main.py
+├── pytest.ini
 └── requirements.txt
 ```
 
-## Requirements
+---
 
-- Python 3.11+
-- A Telegram bot token from BotFather
+## Quick Start (Docker)
 
-## Setup
+### 1. Install Docker
 
-1. Create and activate a virtual environment.
-2. Install dependencies:
+```bash
+curl -fsSL https://get.docker.com | sh
+```
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 2. Clone and configure
 
-3. Copy the example environment file and update values:
+```bash
+git clone <your-repo-url> /opt/smsbot
+cd /opt/smsbot
+cp .env.example .env
+```
 
-   ```bash
-   cp .env.example .env
-   ```
+### 3. Edit `.env`
 
-4. Start the example backend:
+```bash
+nano .env
+```
 
-   ```bash
-   python -m app.backend
-   ```
-
-5. Start the Telegram bot in a second terminal:
-
-   ```bash
-   python main.py
-   ```
-
-## Telegram bot commands
-
-- `/start` — register/login the user against the backend
-- `/profile` — view stored profile details and caller ID selection
-- `/balance` — show current credit balance
-- `/numbers` — list provisioned outbound numbers
-- `/call` — prompt for a destination number and place a call
-- `/status` — refresh active call statuses
-- `/history` — show recent calls
-- `/end` — disconnect the latest active call
-- `/cancel` — cancel the current call entry flow
-
-## Environment variables
+Fill in at minimum:
 
 | Variable | Description |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token used by `python-telegram-bot` |
-| `BACKEND_API_BASE_URL` | Base URL for the backend API used by the bot |
-| `DATABASE_URL` | SQLAlchemy database URL for user and call persistence |
-| `REQUEST_TIMEOUT` | HTTP timeout in seconds for backend API requests |
-| `STATUS_POLL_INTERVAL` | Seconds between call status refresh attempts |
-| `DEFAULT_USER_CREDITS` | Starting credit balance assigned by the example backend |
-| `AVAILABLE_NUMBERS` | Comma-separated list of provisioned outbound numbers |
-| `TRUNK_PROVIDER_NAME` | Backend-owned trunk/provider label shown to users |
-| `BACKEND_HOST` | Bind host for the example Flask backend |
-| `BACKEND_PORT` | Bind port for the example Flask backend |
-| `LOG_LEVEL` | Application log level |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather) |
+| `ADMIN_TELEGRAM_IDS` | Your Telegram user ID (get from [@userinfobot](https://t.me/userinfobot)) |
+| `DATABASE_URL` | PostgreSQL connection URL |
+| `ENCRYPTION_KEY` | Generate with: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `POSTGRES_PASSWORD` | Password for the PostgreSQL container |
 
-## Example backend API
+### 4. Deploy
 
-### Authenticate/register a Telegram user
-
-```http
-POST /api/auth/telegram
-Content-Type: application/json
-
-{
-  "telegram_id": 42,
-  "username": "alice",
-  "first_name": "Alice",
-  "last_name": "Caller"
-}
+```bash
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh
 ```
 
-### Get available numbers
+This will:
+1. Build Docker images
+2. Start PostgreSQL and Redis
+3. Run Alembic database migrations
+4. Start the bot, ARQ worker, and health check server
 
-```http
-GET /api/numbers
+### 5. Verify
+
+```bash
+# Check all containers are running
+docker compose ps
+
+# Check health endpoint
+curl http://localhost:8080/health
+
+# View bot logs
+docker compose logs -f bot
 ```
 
-### Save a selected number
+---
 
-```http
-POST /api/users/<telegram_id>/selected-number
-Content-Type: application/json
+## Local Development (without Docker)
 
-{
-  "selected_number": "+12025550111"
-}
+### Requirements
+
+- Python 3.12+
+- PostgreSQL 14+
+- Redis 7+
+
+### Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env with your values
+
+# Run migrations
+alembic upgrade head
+
+# Start the bot
+python main.py
+
+# In a second terminal, start the worker
+python -m arq app.workers.sms_worker.WorkerSettings
 ```
 
-### Place a call
+---
 
-```http
-POST /api/calls
-Content-Type: application/json
+## Bot Usage
 
-{
-  "telegram_id": 42,
-  "source_number": "+12025550111",
-  "destination_number": "+12025550199"
-}
+### User Flow
+
+1. `/start` — Opens the main menu
+2. **Account Settings** → **SMTP Accounts** → **Add SMTP Account**
+   - Enter SMTP host, port, username, password, encryption type
+   - Bot tests the connection before saving
+3. **Add Recipient** — Enter name, phone, carrier, and confirm consent
+4. **Send Message** — Select SMTP account → select recipients → compose → preview → confirm
+
+### SMTP Providers
+
+| Provider | Host | Port | Encryption |
+|---|---|---|---|
+| Gmail (App Password) | `smtp.gmail.com` | 587 | TLS |
+| Outlook / Microsoft 365 | `smtp.office365.com` | 587 | TLS |
+| Zoho | `smtp.zoho.com` | 587 | TLS |
+| Custom | Your host | Your port | TLS or SSL |
+
+> For Gmail, use an **App Password** (not your regular password): [Google App Passwords](https://myaccount.google.com/apppasswords)
+
+### Rate Limits
+
+- 5 messages per minute
+- 50 messages per hour
+- 250 messages per day (resets at midnight in `APP_TIMEZONE`)
+
+---
+
+## Admin Commands
+
+Send `/admin` to the bot (must be in `ADMIN_TELEGRAM_IDS`):
+
+- **System Stats** — Total users, messages today, failed today
+- **Users** — List users, view details, suspend/unsuspend, change limits
+- **Audit Logs** — Recent action log
+
+---
+
+## Carrier Gateway Configuration
+
+Carrier gateways are in `app/carriers.py`. To add or update a carrier:
+
+```python
+"mycarrier": CarrierGateway(
+    key="mycarrier",
+    display_name="My Carrier",
+    sms_gateway="sms.mycarrier.com",
+    mms_gateway="mms.mycarrier.com",
+),
 ```
 
-### Get live call status
+No code changes needed elsewhere — the bot reads this config at runtime.
 
-```http
-GET /api/calls/<call_id>
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | required | Telegram bot token |
+| `ADMIN_TELEGRAM_IDS` | `[]` | Comma-separated admin Telegram IDs |
+| `DATABASE_URL` | SQLite fallback | PostgreSQL connection URL |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `ENCRYPTION_KEY` | required | Fernet 32-byte base64 key |
+| `APP_TIMEZONE` | `America/Detroit` | Timezone for daily limit reset |
+| `DAILY_MESSAGE_LIMIT` | `250` | Max messages per user per day |
+| `HOURLY_MESSAGE_LIMIT` | `50` | Max messages per user per hour |
+| `MINUTE_MESSAGE_LIMIT` | `5` | Max messages per user per minute |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `WEB_ADMIN_PORT` | `8080` | Health check HTTP port |
+
+---
+
+## Database Backup
+
+```bash
+# Backup PostgreSQL
+./scripts/backup.sh
+
+# Backups saved to /opt/smsbot/backups/ (keeps last 30)
 ```
 
-### End a call
+---
 
-```http
-POST /api/calls/<call_id>/end
+## Restart / Update
+
+```bash
+# Restart all services
+docker compose restart
+
+# Update to latest code
+git pull
+docker compose build
+docker compose up -d
+
+# Rollback: check out previous tag
+git checkout v1.0.0
+docker compose build
+docker compose up -d
 ```
 
-### Read call history
+---
 
-```http
-GET /api/users/<telegram_id>/calls
+## Testing
+
+```bash
+pip install pytest pytest-asyncio
+pytest
 ```
 
-## Notes
+---
 
-- The Flask backend simulates call progression so the bot can demonstrate real-time updates without an external telephony vendor.
-- Replace the example backend implementation in `app/backend.py` with your production routing logic and trunk integrations when ready.
-- The bot stores local user and call records so history and account state survive restarts when using a persistent database.
+## Limitations
+
+- SMS delivery through SMTP-to-SMS gateways is **not guaranteed**. Carriers may filter, delay, or block messages without notice.
+- Carriers can change or discontinue their gateway addresses at any time. Update `app/carriers.py` as needed.
+- This platform is designed exclusively for **consent-based** notifications. Do not use it for unsolicited bulk messaging.
+- The messaging layer is designed so SMTP-to-SMS can be replaced with Twilio, Telnyx, Sinch, or another SMS provider by modifying `app/services/smtp_service.py` and the worker without rewriting the Telegram bot.
+
+---
+
+## License
+
+MIT
+
