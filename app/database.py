@@ -1,38 +1,39 @@
+"""Async SQLAlchemy engine and session factory."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Iterator
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
-from app.models import Base
+from app.config import get_settings
 
 _engine = None
-SessionLocal: sessionmaker[Session] | None = None
+_async_session_factory = None
 
 
-
-def init_database(database_url: str):
-    global _engine, SessionLocal
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    _engine = create_engine(database_url, future=True, connect_args=connect_args)
-    SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False, future=True)
-    Base.metadata.create_all(_engine)
+def _get_engine():
+    global _engine
+    if _engine is None:
+        settings = get_settings()
+        # Convert postgres:// → postgresql+asyncpg://
+        url = settings.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        _engine = create_async_engine(url, pool_pre_ping=True, echo=False)
     return _engine
 
 
-@contextmanager
-def session_scope() -> Iterator[Session]:
-    if SessionLocal is None:
-        raise RuntimeError("Database has not been initialized.")
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _async_session_factory
+    if _async_session_factory is None:
+        _async_session_factory = async_sessionmaker(
+            bind=_get_engine(), expire_on_commit=False, class_=AsyncSession
+        )
+    return _async_session_factory
 
-    session = SessionLocal()
-    try:
+
+async def get_db() -> AsyncSession:  # type: ignore[return]
+    """Async generator yielding a session; use as a dependency."""
+    factory = get_session_factory()
+    async with factory() as session:
         yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()

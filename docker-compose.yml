@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smsbot
+      POSTGRES_USER: smsbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smsbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://smsbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/smsbot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  bot:
+    build: .
+    command: python main.py
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smsbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/smsbot
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: python -m arq app.workers.sms_worker.WorkerSettings
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smsbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/smsbot
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  healthcheck:
+    build: .
+    command: python -m aiohttp.web -H 0.0.0.0 -P 8080 app.web:create_app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smsbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/smsbot
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
